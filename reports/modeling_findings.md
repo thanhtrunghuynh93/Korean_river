@@ -105,7 +105,67 @@ strongly under-predicted in May–Jun 2018, consistent with the seasonal anomaly
 | New site, HAAFP | T1 xgb (chemistry only) | 0.72 | 20 % |
 | Single sample, no history, either target | T1 xgb | THMFP 0.58, HAAFP 0.72 (site) | 18–20 % |
 
-## 5. Limitations and next steps
+## 6. Improvement round 1 — richer features (2026-09-16)
+
+Scope chosen by the user: feature changes only (basin-wide same-month features; richer chemistry and
+cross-target lags). Models, nested search and folds are unchanged, so gains are attributable to features.
+Five pre-registered feature sets on top of tier 3 (`src/experiments.py`), evaluated with ridge and XGBoost under
+month / site / forward; site folds repeated over 3 seeds (seed sd ≤ 0.024). Selection rule fixed in advance:
+best mean R² over month and site. Full table: notebook §10, `results/experiments.csv` (rows `t3…t4_all`).
+
+| Experiment | Adds | THMFP ridge month / site / fwd | THMFP xgb | HAAFP ridge | HAAFP xgb |
+|---|---|---|---|---|---|
+| `t3` (baseline) | — | 0.62 / 0.68 / 0.32 | 0.53 / 0.70 / −0.17 | 0.65 / 0.54 / 0.51 | 0.61 / 0.65 / 0.52 |
+| `t3_chem` | LC-OCD ratios to TOC, Temp×TOC, sparse extras | 0.63 / 0.67 / 0.23 | 0.55 / 0.72 / −0.03 | 0.61 / 0.63 / 0.50 | 0.63 / 0.69 / 0.53 |
+| `t3_xlag` | other target's lags, lag-2, upstream lag-1 | 0.59 / 0.68 / 0.37 | 0.54 / 0.73 / 0.01 | 0.65 / 0.59 / 0.51 | 0.62 / 0.63 / 0.50 |
+| `t3_basin` | same-month network means, downstream, plant raw | **0.68 / 0.68 / 0.42** | 0.60 / 0.72 / −0.38 | 0.72 / 0.62 / 0.62 | 0.63 / 0.67 / 0.55 |
+| `t4_all` | union | 0.66 / 0.65 / 0.43 | 0.60 / 0.75 / −0.16 | **0.71 / 0.66 / 0.59** | 0.66 / 0.68 / 0.56 |
+
+**Result.** Both final models change to **ridge** with network features:
+
+| Target | Round 0 final | Round 1 final | month | site | forward | honest mean |
+|---|---|---|---|---|---|---|
+| THMFP | T3 xgb: 0.53 / 0.70 / −0.17 | **`t3_basin` ridge** | 0.68 | 0.68 | 0.42 | 0.615 → **0.682 (+0.07)** |
+| HAAFP | T3 xgb: 0.61 / 0.68 / 0.52 | **`t4_all` ridge** | 0.71 | 0.66 | 0.59 | 0.646 → **0.686 (+0.04)** |
+
+THMFP meets the ≥ 0.05 success criterion; HAAFP falls just short of it but the gain is above the seed noise
+(0.02) and consistent across all three schemes. Saved as `models/THMFP_t3_basin_ridge.joblib` and
+`models/HAAFP_t4_all_ridge.joblib` (the round-0 XGBoost models remain in `models/`).
+
+**Why it works.** The basin features remove the shared monthly offset: the share of month-scheme residual
+variance explained by a per-month mean residual falls from 26 % to 11 % (THMFP, ridge) and 22 % to 8 % (HAAFP)
+(notebook §10). Permutation importance of the finals (`figures/29`) is led by the group / basin same-month means,
+downstream and upstream targets, then HS and lag-1. Forward extrapolation into summer 2018 improves for ridge
+(THMFP 0.32 → 0.42, HAAFP 0.51 → 0.59) because the basin mean of that month carries the anomaly into the inputs;
+trees do the opposite for THMFP (xgb −0.17 → −0.38) because they cannot extrapolate a feature beyond its
+training range.
+
+**Negative and mixed results, kept on record.**
+- `t3_xlag` (cross-target lags, lag-2) is noise-level everywhere (|Δ| ≤ 0.03 on honest schemes).
+- `t3_chem` helps HAAFP on new sites (ridge +0.09, xgb +0.03) but hurts THMFP forward for ridge (−0.10); it is in
+  the HAAFP final via `t4_all` and excluded from the THMFP final.
+- XGBoost improves on the site scheme with every block (THMFP `t4_all` 0.75, the best single site-scheme
+  number) but never on the month scheme by more than 0.07, so the honest mean favours ridge.
+- HGB on the winners tracked xgb (THMFP `t3_basin` 0.65 / 0.71; HAAFP `t4_all` 0.65 / 0.61) and did not win.
+- One confound to disclose: the ridge pipeline gained a missing-value indicator in this round so the sparse extras
+  would not be imputed silently. That alone raised the ridge `t3` baseline versus round 0 (THMFP site 0.64 → 0.68,
+  HAAFP site 0.48 → 0.54). All round-1 comparisons are against the re-run `t3`, so the feature deltas above are
+  like-for-like; the round-0 → round-1 totals include this model-side effect.
+
+**Deployment assumption.** Basin, group, downstream and plant-raw features need the *other* sites of the network
+sampled in the same month (the same assumption as the upstream feature already in tier 3). For a single sample
+without network context, the tier-1 chemistry models from round 0 still apply (THMFP 0.58, HAAFP 0.72 on new sites).
+
+**Updated recommendation**
+
+| Use case | Model | month / site / forward R² |
+|---|---|---|
+| Monitoring network sampled this month, either target | `models/THMFP_t3_basin_ridge.joblib`, `models/HAAFP_t4_all_ridge.joblib` | 0.68 / 0.68 / 0.42 and 0.71 / 0.66 / 0.59 |
+| New site inside the network, THMFP | `t4_all` xgb (site 0.75) or the ridge final (0.68) | |
+| New site, HAAFP, chemistry only | round-0 T1 xgb (site 0.72) | |
+| Single sample, no network or history | round-0 T1 xgb | THMFP 0.58, HAAFP 0.72 (site) |
+
+## 7. Limitations and next steps
 
 - 16 months = one seasonal cycle; the forward test is a single 4-month period with an anomaly. More years are
   the only cure for the extrapolation weakness.

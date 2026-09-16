@@ -22,6 +22,7 @@ notebooks/eda.ipynb   exploratory analysis, writes figures/
 notebooks/build_eda_nb.py  regenerates eda.ipynb from source (edit cells here, then re-execute)
 figures/              PNG figures numbered in notebook order
 reports/eda_findings.md  written summary
+docs/index.html       self-contained HTML summary of the EDA and the best models (figures embedded)
 ```
 
 ## Run the EDA
@@ -57,11 +58,18 @@ notebooks/modeling.ipynb   result figures 20–27 (regenerate with notebooks/bui
 tests/               leakage and fold-integrity tests
 ```
 
+Improvement round 1 adds pre-registered feature experiments on top of tier 3 (`src/experiments.py`):
+`t3` (baseline), `t3_chem` (fraction ratios, sparse extras), `t3_xlag` (other target's lags, lag-2),
+`t3_basin` (same-month network means, downstream neighbour, plant raw water), `t4_all`. Selection rule is the
+mean R² over the `month` and `site` schemes; `site`/`random` schemes are repeated over 3 seeds.
+
 ```bash
 uv run pytest -q
-uv run python -m src.train --all                    # ~15 min, 96 cells
+uv run python -m src.train --all                    # ~3 min, 96 cells, single seed
+uv run python -m src.train --ablation               # ~10 min, experiments x targets x {ridge,xgb} x {month,site,forward}
 uv run python -m src.train --target THMFP --tier 3 --model xgb --scheme site
-uv run python -m src.interpret
+uv run python -m src.train --target HAAFP --exp t3_basin --model xgb --scheme month --seeds 3
+uv run python -m src.interpret                      # picks the best spec/model per target (or --exp/--tier + --model)
 uv run python notebooks/build_modeling_nb.py && uv run jupyter nbconvert --execute --inplace notebooks/modeling.ipynb
 ```
 
