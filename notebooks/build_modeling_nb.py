@@ -43,6 +43,7 @@ from matplotlib.patches import Patch
 from preprocessing import style
 from preprocessing.load import SITE_ORDER, GROUP_ORDER, GROUP_LABEL, TARGETS
 from src.cv import SCHEMES
+from src.experiments import EXPERIMENT_ORDER, NEW_FEATURE_BLOCK
 style.apply()
 GC = style.GROUP_COLORS
 MODEL_COLORS = {"ridge": "#2a78d6", "hgb": "#eb6834", "xgb": "#1baf7a"}
@@ -166,8 +167,8 @@ fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
 for ax, t in zip(axes, TARGETS):
     d = imp[imp.target == t].head(12).iloc[::-1]
     f = final[final.target == t].iloc[0]
-    ax.barh(d.feature, d["mean"], xerr=d["sd"], color=TIER_COLORS[str(f.tier)], error_kw={"ecolor": style.TEXT_2, "elinewidth": 1})
-    ax.set_title(f"{t} · tier {f.tier} {f.model}")
+    ax.barh(d.feature, d["mean"], xerr=d["sd"], color=TIER_COLORS.get(str(f.tier), "#4a3aa7"), error_kw={"ecolor": style.TEXT_2, "elinewidth": 1})
+    ax.set_title(f"{t} · {f.tier} {f.model}")
     ax.set_xlabel("increase in RMSE (log10) when the feature is shuffled")
 fig.suptitle("Permutation importance on held-out sites (mean ± sd over 11 site folds)", x=0.01, ha="left", fontweight="bold")
 fig.tight_layout(); style.savefig(fig, "24_permutation_importance"); plt.show()
@@ -178,7 +179,7 @@ fig, axes = plt.subplots(2, 4, figsize=(15, 6.5))
 for i, t in enumerate(TARGETS):
     for j, f in enumerate(feats[t]):
         ax = axes[i, j]; d = pdp[(pdp.target == t) & (pdp.feature == f)]
-        ax.plot(d.x, 10 ** d.y_pred, color=TIER_COLORS[str(final[final.target == t].iloc[0].tier)])
+        ax.plot(d.x, 10 ** d.y_pred, color=TIER_COLORS.get(str(final[final.target == t].iloc[0].tier), "#4a3aa7"))
         ax.set_title(f"{t} vs {f}", fontsize=10); ax.set_xlabel(f); ax.set_ylabel(f"predicted {t} [mg/L]" if j == 0 else "")
     for j in range(len(feats[t]), 4): axes[i, j].axis("off")
 fig.suptitle("Partial dependence of the final model (other features at their observed values)", x=0.01, ha="left", fontweight="bold")
@@ -234,10 +235,101 @@ fig.tight_layout(); style.savefig(fig, "27_oof_timeseries"); plt.show()
 """)
 
 md("""
-## 9. Findings
+## 9. Findings (round 0)
 
 See `reports/modeling_findings.md` for the written summary (recommended model per target, what the spatial /
 temporal context adds, per-group behaviour, safeguards against leakage, limitations and next steps).
+
+## 10. Improvement round 1 — feature ablations
+
+Pre-registered feature sets on top of tier 3 (`src/experiments.py`), same models, same nested search, same
+folds; `site` and `random` schemes repeated over 3 seeds. `t3` is the baseline re-run under this protocol.
+
+| Experiment | Adds |
+|---|---|
+| `t3_chem` | LC-OCD fractions as ratios to TOC, Temp × log TOC, sparse extras (COD, SS, DO, BOD, NH3-N, SUVA, Aromaticity, MolWeight) |
+| `t3_xlag` | other target's lag-1 / history / upstream value, own lag-2, upstream site's lag-1 |
+| `t3_basin` | leave-one-out same-month means over the other river sites (target, TOC, HS) and own group, downstream neighbour, plant raw-water target |
+| `t4_all` | union |
+""")
+code("""
+abl = exp[exp.tier.isin(EXPERIMENT_ORDER)].copy()
+abl_tab = abl.pivot_table(index=["target", "model", "tier"], columns="scheme", values="r2_log")
+abl_tab = abl_tab.reindex(columns=[s for s in ["month", "site", "forward", "random"] if s in abl_tab.columns])
+abl_tab["honest_mean"] = abl_tab[["month", "site"]].mean(axis=1)
+abl_tab = abl_tab.reset_index()
+abl_tab["tier"] = pd.Categorical(abl_tab["tier"], EXPERIMENT_ORDER, ordered=True)
+abl_tab = abl_tab.sort_values(["target", "model", "tier"]).set_index(["target", "model", "tier"])
+abl_tab.round(3)
+""")
+code("""
+# delta vs the t3 baseline, same target / model / scheme
+base_t3 = abl[abl.tier == "t3"].set_index(["target", "model", "scheme"])["r2_log"]
+abl["delta"] = abl.r2_log.to_numpy() - base_t3.reindex(pd.MultiIndex.from_frame(abl[["target", "model", "scheme"]])).to_numpy()
+delta = abl.pivot_table(index=["target", "tier"], columns=["scheme", "model"], values="delta")
+delta = delta.reindex(EXPERIMENT_ORDER, level="tier")
+delta.round(3)
+""")
+code("""
+schemes_abl = ["month", "site", "forward"]
+exps = [e for e in EXPERIMENT_ORDER if e != "t3"]
+fig, axes = plt.subplots(2, 3, figsize=(15, 7), sharey=True)
+w = 0.38
+for i, t in enumerate(TARGETS):
+    for j, s in enumerate(schemes_abl):
+        ax = axes[i, j]
+        for k, m in enumerate(["ridge", "xgb"]):
+            d = abl[(abl.target == t) & (abl.scheme == s) & (abl.model == m)].set_index("tier").reindex(exps)
+            x = np.arange(len(exps)) + (k - 0.5) * w
+            ax.bar(x, d.delta, width=w * 0.92, color=MODEL_COLORS[m], label=m)
+            err = d.r2_seed_sd.fillna(0) if s == "site" else np.zeros(len(exps))
+            if s == "site": ax.errorbar(x, d.delta, yerr=err, fmt="none", ecolor=style.TEXT_2, elinewidth=1, capsize=2)
+        ax.axhline(0, color=style.TEXT_2, lw=1); ax.axhspan(-0.03, 0.03, color=style.GRID, alpha=0.5, lw=0)
+        ax.set_xticks(range(len(exps))); ax.set_xticklabels([e.replace("t3_", "+").replace("t4_all", "+all") for e in exps])
+        ax.set_title(f"{t} — {s}: ΔR² vs t3")
+        if j == 0: ax.set_ylabel("Δ pooled OOF R² (log10)")
+axes[0, 0].legend(loc="upper left")
+fig.suptitle("Feature ablations: gain over tier 3 (grey band = ±0.03 noise level; error bars = sd over 3 site-fold seeds)",
+             x=0.01, ha="left", fontweight="bold")
+fig.tight_layout(); style.savefig(fig, "28_ablation_delta_r2"); plt.show()
+""")
+code("""
+# month-wide offset diagnostic: share of residual variance explained by a per-Date mean residual (month scheme, xgb)
+rows = []
+for t in TARGETS:
+    for e in EXPERIMENT_ORDER:
+        for m in ["ridge", "xgb"]:
+            p = pred[(pred.target == t) & (pred.scheme == "month") & (pred.tier == e) & (pred.model == m)].copy()
+            if p.empty: continue
+            p["res"] = p.y_pred - p.y
+            off = p.groupby("Date").res.transform("mean")
+            rows.append({"target": t, "experiment": e, "model": m, "resid_var": p.res.var(),
+                         "month_offset_share": 1 - (p.res - off).var() / p.res.var()})
+off_tab = pd.DataFrame(rows).pivot_table(index=["target", "experiment"], columns="model", values="month_offset_share").reindex(EXPERIMENT_ORDER, level="experiment")
+(off_tab * 100).round(0).astype(int).astype(str) + " %"
+""")
+code("""
+# final models after round 1 (results/final_models.csv) and their permutation importance with new features highlighted
+final
+""")
+code("""
+BLOCK_COLORS = {"base": "#2a78d6", "chem": "#eb6834", "xlag": "#1baf7a", "basin": "#4a3aa7"}
+fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+for ax, t in zip(axes, TARGETS):
+    f = final[final.target == t].iloc[0]
+    d = imp[imp.target == t].head(15).iloc[::-1]
+    colors = [BLOCK_COLORS[NEW_FEATURE_BLOCK.get(x, "base")] for x in d.feature]
+    ax.barh(d.feature, d["mean"], xerr=d["sd"], color=colors, error_kw={"ecolor": style.TEXT_2, "elinewidth": 1})
+    ax.set_title(f"{t} · {f.tier} {f.model}"); ax.set_xlabel("increase in RMSE (log10) when shuffled (held-out sites)")
+handles = [Patch(color=c, label={"base": "tier 1–3", "chem": "+chem", "xlag": "+xlag", "basin": "+basin"}[b]) for b, c in BLOCK_COLORS.items()]
+fig.legend(handles=handles, loc="lower center", ncol=4, bbox_to_anchor=(0.5, -0.02))
+fig.suptitle("Permutation importance of the round-1 final models, coloured by feature block", x=0.01, ha="left", fontweight="bold")
+fig.tight_layout(rect=(0, 0.04, 1, 1)); style.savefig(fig, "29_new_feature_importance"); plt.show()
+""")
+md("""
+## 11. Findings (round 1)
+
+See `reports/modeling_findings.md` §6.
 """)
 
 nb = nbf.v4.new_notebook(cells=cells)
