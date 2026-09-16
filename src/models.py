@@ -17,19 +17,23 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
-from src.features import SiteTargetEncoder
+from src.features import SITE_COL, SiteTargetEncoder, feature_columns
 
 MODELS = ("ridge", "hgb", "xgb")
 BASELINES = ("median", "site_median", "persistence")
 N_SEARCH_ITER = 12
 
 
-def make_model(name: str, tier: int, seed: int = 0) -> tuple[Pipeline, dict]:
+def make_model(name: str, spec: int | str, seed: int = 0) -> tuple[Pipeline, dict]:
+    """`spec` is an int tier or an experiment name (see src/experiments.py)."""
     steps = []
-    if tier >= 2:
+    if SITE_COL in feature_columns(spec):
         steps.append(("site_te", SiteTargetEncoder()))
     if name == "ridge":
-        steps += [("impute", SimpleImputer(strategy="median")), ("scale", StandardScaler()),
+        # add_indicator: columns that are 100 % missing for a site group (e.g. SUVA in treatment trains)
+        # get a missingness flag instead of silently becoming the median
+        steps += [("impute", SimpleImputer(strategy="median", add_indicator=True, keep_empty_features=True)),
+                  ("scale", StandardScaler()),
                   ("model", RidgeCV(alphas=[0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100]))]
         params: dict = {}
     elif name == "hgb":

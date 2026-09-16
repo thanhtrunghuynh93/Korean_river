@@ -23,7 +23,8 @@ from sklearn.model_selection import RandomizedSearchCV
 
 from preprocessing.load import TARGETS
 from src.cv import inner_cv, inner_groups, splits
-from src.features import SITE_COL, base_frame, build
+from src.experiments import EXPERIMENT_ORDER
+from src.features import SITE_COL, base_frame, build, spec_label
 from src.models import MODELS, N_SEARCH_ITER, make_model
 from src.train import EXP_PATH, RESULTS, SEED
 
@@ -32,13 +33,19 @@ MODEL_DIR = ROOT / "models"
 TOP_K = 4
 
 
-def choose(exp: pd.DataFrame, target: str) -> tuple[int, str, pd.Series]:
+def _spec(tier: str) -> int | str:
+    return int(tier) if str(tier).isdigit() else str(tier)
+
+
+def choose(exp: pd.DataFrame, target: str) -> tuple[int | str, str, pd.Series]:
+    """Best (feature spec, model) by mean pooled R² over the month and site schemes (both required)."""
     e = exp[(exp.target == target) & exp.model.isin(MODELS)].copy()
-    e["tier"] = e["tier"].astype(int)
-    honest = e[e.scheme.isin(["month", "site"])].groupby(["tier", "model"])["r2_log"].mean().rename("r2_honest")
+    e["tier"] = e["tier"].astype(str)
+    honest = (e[e.scheme.isin(["month", "site"])].pivot_table(index=["tier", "model"], columns="scheme", values="r2_log")
+                .dropna(subset=["month", "site"]).mean(axis=1))
     tier, model = honest.idxmax()
     summary = e[(e.tier == tier) & (e.model == model)].set_index("scheme")["r2_log"]
-    return int(tier), str(model), summary
+    return _spec(tier), str(model), summary
 
 
 def _feature_names(pipe, X: pd.DataFrame) -> list[str]:
@@ -48,7 +55,7 @@ def _feature_names(pipe, X: pd.DataFrame) -> list[str]:
     return cols
 
 
-def fit_final(target: str, tier: int, model: str, df: pd.DataFrame, seed: int = SEED):
+def fit_final(target: str, tier: int | str, model: str, df: pd.DataFrame, seed: int = SEED):
     X, y, meta = build(target, tier, df)
     pipe, params = make_model(model, tier, seed)
     if params:
@@ -61,7 +68,7 @@ def fit_final(target: str, tier: int, model: str, df: pd.DataFrame, seed: int = 
     return est, best, X, y, meta
 
 
-def site_out_importance(target: str, tier: int, model: str, best_params: dict, df: pd.DataFrame,
+def site_out_importance(target: str, tier: int | str, model: str, best_params: dict, df: pd.DataFrame,
                         seed: int = SEED) -> pd.DataFrame:
     """Permutation importance on held-out sites: refit with the chosen params on each site fold."""
     X, y, meta = build(target, tier, df)
@@ -98,24 +105,26 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", choices=TARGETS)
     ap.add_argument("--tier", type=int)
+    ap.add_argument("--exp", choices=EXPERIMENT_ORDER)
     ap.add_argument("--model", choices=MODELS)
     a = ap.parse_args()
 
-    exp = pd.read_csv(EXP_PATH)
+    exp = pd.read_csv(EXP_PATH, dtype={"tier": str})
     df = base_frame()
     MODEL_DIR.mkdir(exist_ok=True)
     finals, imps, pdps = [], [], []
     for target in ([a.target] if a.target else TARGETS):
-        if a.tier and a.model:
-            tier, model = a.tier, a.model
-            cv_r2 = exp[(exp.target == target) & (exp.tier.astype(str) == str(tier)) & (exp.model == model)] \
+        forced = a.exp if a.exp else a.tier
+        if forced is not None and a.model:
+            tier, model = forced, a.model
+            cv_r2 = exp[(exp.target == target) & (exp.tier == str(tier)) & (exp.model == model)] \
                 .set_index("scheme")["r2_log"]
         else:
             tier, model, cv_r2 = choose(exp, target)
-        print(f"{target}: tier {tier} {model}  CV R2 by scheme: {cv_r2.round(3).to_dict()}")
+        print(f"{target}: {spec_label(tier)} {model}  CV R2 by scheme: {cv_r2.round(3).to_dict()}")
 
         est, best, X, y, meta = fit_final(target, tier, model, df)
-        path = MODEL_DIR / f"{target}_tier{tier}_{model}.joblib"
+        path = MODEL_DIR / f"{target}_{spec_label(tier)}_{model}.joblib"
         joblib.dump({"pipeline": est, "features": list(X.columns), "target": target, "tier": tier,
                      "model": model, "best_params": best, "note": "predicts log10(target in mg/L)"}, path)
         finals.append({"target": target, "tier": tier, "model": model, "path": str(path.relative_to(ROOT)),
