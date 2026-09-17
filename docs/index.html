@@ -218,8 +218,42 @@ a:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
   </table></div>
 </section>
 
+<section id="why-ridge">
+  <span class="eyebrow">5 · Why ridge beat XGBoost</span>
+  <h2>A linear model won because the task became one of propagating a measured shift</h2>
+  <p>In round 0 the tree model led on unseen sites, where the job was to learn site-specific nonlinearities. Round 1 added the
+  network's same-month values, and with them the strongest signal became a shift that has to be carried through to the
+  prediction. That is a linear job, and it exposed a structural limit of trees.</p>
+  <ul class="findings">
+    <li><strong>Trees cannot predict beyond the training range.</strong> A boosted tree returns a constant inside each leaf, so its
+    output never exceeds the largest value it was trained on. In the forward holdout one in ten THMFP observations sits above the
+    training maximum of 0.29 mg/L. XGBoost tops out at 0.15 mg/L there and under-predicts those points by about a factor of four;
+    ridge keeps extending along its slope, reaches 0.38 mg/L, and halves that error.</li>
+    <li><strong>The gap is concentrated in anomalous months.</strong> Within the leave-months-out scheme the two models are close on
+    typical months. On the high months of 2018 ridge still explains part of the variance while XGBoost explains almost none.</li>
+    <li><strong>The new features are nearly linear in the log target.</strong> Ridge spreads its weight almost evenly across the
+    group mean, basin mean, site encoding and last month's value, so when the whole basin rises every input pushes the prediction
+    up together. A tree must rediscover each of those as step functions from about 500 rows.</li>
+    <li><strong>Strong regularisation suits a small, collinear sample.</strong> Ridge chose a heavy penalty and the inputs are highly
+    correlated (TOC with humic substances 0.78, humic substances with building blocks 0.81). Shrinking correlated coefficients
+    together is what ridge does well; the trees show the larger fold-to-fold spread.</li>
+    <li><strong>XGBoost still wins on unseen sites inside known months.</strong> With all feature blocks it reaches site R² 0.75 for
+    THMFP against 0.68 for ridge, so the tree model stays the recommendation for a new site in a known period.</li>
+  </ul>
+  <div class="tablewrap"><table>
+    <thead><tr><th>THMFP, basin feature set</th><th>Model</th><th>Max prediction, forward holdout</th><th>Error on points above training max</th><th>R² typical months</th><th>R² anomalous months</th></tr></thead>
+    <tbody>
+      <tr><td>observed maximum 0.551 mg/L</td><td>ridge</td><td>0.379 mg/L</td><td>−0.20 log10 (÷1.6)</td><td>0.70</td><td>0.28</td></tr>
+      <tr><td></td><td>XGBoost</td><td>0.146 mg/L</td><td>−0.59 log10 (÷3.9)</td><td>0.65</td><td>0.03</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">Anomalous months are those whose basin-wide median THMFP exceeds 0.15 mg/L (176 of 693 rows). Two caveats: the
+  ridge pipeline also gained a missing-value indicator in round 1, which raised its own baseline, and the forward test rests on a
+  single anomalous summer. Monotone constraints or a ridge–tree blend would likely narrow the gap; both were outside this round's scope.</p>
+</section>
+
 <section id="caveats">
-  <span class="eyebrow">5 · Caveats</span>
+  <span class="eyebrow">6 · Caveats</span>
   <h2>What to keep in mind</h2>
   <ul class="findings">
     <li><strong>One seasonal cycle.</strong> Sixteen months is a single year plus four; the forward test is one anomalous summer. Expect degradation in unusual years and retrain as months arrive.</li>
