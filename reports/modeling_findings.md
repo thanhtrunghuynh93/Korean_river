@@ -105,7 +105,7 @@ strongly under-predicted in May–Jun 2018, consistent with the seasonal anomaly
 | New site, HAAFP | T1 xgb (chemistry only) | 0.72 | 20 % |
 | Single sample, no history, either target | T1 xgb | THMFP 0.58, HAAFP 0.72 (site) | 18–20 % |
 
-## 6. Improvement round 1 — richer features (2026-09-16)
+## 5. Improvement round 1 — richer features (2026-09-16)
 
 Scope chosen by the user: feature changes only (basin-wide same-month features; richer chemistry and
 cross-target lags). Models, nested search and folds are unchanged, so gains are attributable to features.
@@ -165,7 +165,158 @@ without network context, the tier-1 chemistry models from round 0 still apply (T
 | New site, HAAFP, chemistry only | round-0 T1 xgb (site 0.72) | |
 | Single sample, no network or history | round-0 T1 xgb | THMFP 0.58, HAAFP 0.72 (site) |
 
-## 7. Limitations and next steps
+## 6. Sentinel sampling design (2026-09-25)
+
+**Why.** Round 1's gain came almost entirely from other sites' same-month DBP, and THMFP shares 57 % of its
+within-site month-to-month variation across the whole basin (HAAFP 36 %). The sentinel design uses that shared
+signal while cutting lab work. Chemistry is measured everywhere each month, but THMFP / HAAFP are lab-tested
+only at *k* sentinel sites.
+
+**Setup** (`src/sentinel.py`, tests in `tests/test_sentinel.py`).
+
+- The 16-month dataset acts as a calibration campaign that gives each site's normal log level.
+- A non-sentinel site is predicted by ridge regression from:
+  - its chemistry and context (tier 2 without the site code);
+  - its calibration mean;
+  - the sentinels' mean deviation from their own normal level that month, for both targets;
+  - the deviation of the nearest main-stem sentinel.
+- Non-sentinel sites have no DBP history after calibration, so own-lag features are not used.
+- Evaluation is leave-2-months-out (8 folds).
+- Sentinels are chosen by greedy forward selection inside each outer fold, scored on an inner
+  leave-months-out over the training months only.
+- Scores are pooled R² on the non-sentinel rows of the held-out months.
+
+**QA screen, added after the first run.** In the first run THMFP collapsed at two and three sentinels (R² 0.31
+and 0.37). The cause was one reading: Imha Reservoir (M2), September 2017, THMFP 0.007 mg/L. That is the
+dataset minimum and 1.2 log units below the site's normal level. Whenever M2 was a sentinel, that reading
+dragged every site's prediction down by about a factor of three for the month.
+
+A standard lab-QA rule was added. A sentinel reading is dropped if it lies more than 4 robust SDs from that
+site's normal level, where the robust SD is 1.4826 × MAD of its training-month deviations, floored at 0.05
+log10. Thresholds use training months only. They were set once from the rule and not tuned on scores. Both runs
+are kept in `results/sentinel_summary.csv` (column `qa`). The rule was introduced after seeing test-fold
+results, so treat the screened numbers as slightly optimistic.
+
+| Sentinels / month | Lab share | THMFP R², QA | THMFP R², no QA | HAAFP R², QA | HAAFP R², no QA |
+|---|---|---|---|---|---|
+| 0 | 0 % | 0.49 | 0.49 | 0.58 | 0.58 |
+| 1 | 2 % | 0.63 | 0.56 | 0.68 | 0.67 |
+| 2 | 5 % | 0.58 | 0.31 | 0.69 | 0.71 |
+| 4 | 9 % | 0.65 | 0.53 | 0.68 | 0.71 |
+| 8 | 18 % | 0.68 | 0.67 | 0.72 | 0.70 |
+| all (round-1 gap-fill finals) | ~100 % | 0.68 | | 0.71 | |
+
+Fold-to-fold sd is 0.14–0.21 throughout (`figures/30_sentinel_design.png`).
+
+**Findings.**
+
+- **A single sentinel recovers much of the network benefit.** THMFP rises from 0.49 to 0.63, HAAFP from 0.58 to
+  0.68, with 2 % of the lab tests.
+- **About 4–8 sentinels (9–18 % of lab tests) match full-network gap-filling for THMFP.** For HAAFP, 1–2
+  sentinels are enough. Differences between k = 1 and k = 8 are within fold noise for HAAFP.
+- **Useful sentinels differ by target.** For HAAFP, Bansong raw water (M14) is picked first in 5 of 8 folds, and M4,
+  M14, M15 and T4 dominate the first four picks. For THMFP, the first pick alternates between Namgang Reservoir (3; 4
+  folds) and M14 (3 folds), and Imha (M2) is among the first four in 7 of 8 folds once the QA screen is on.
+  *(Corrected 2026-09-25: an earlier version said M14 was picked first for both targets.)*
+- **Treatment-train stages are the weakest group** (THMFP 0.41, HAAFP 0.63 at k = 4), because their
+  deviation from normal depends on plant operation as well as the river.
+- **Operational lesson.** A sentinel design needs a QA screen on sentinel results, because one bad reading
+  spreads to every site. The M2 September 2017 value should go to the data owner for confirmation.
+
+**Limits.**
+
+- Only the month scheme is tested. A brand-new site needs a calibration period to learn its normal level.
+- The sentinel set changes between folds. A fixed operational set should be picked by the same greedy
+  procedure on all 16 months, then validated on new data.
+- Ridge only. Tree models were not tried here.
+
+## 7. Round 2: model-side levers, honest selection and intervals (2026-09-25)
+
+**Scope.** Six models targeting diagnosed weaknesses, added to `src/models.py` with tests in
+`tests/test_models.py`:
+
+| Model | What it does | Weakness targeted |
+|---|---|---|
+| spline-ridge | cubic splines with linear extrapolation on key chemistry | nonlinearity |
+| monotone XGBoost | increasing constraints on organic carbon and network features | tree extrapolation |
+| specific-FP XGBoost | predicts log(FP) − log(TOC) | the TOC scale trees cannot extend |
+| ridge + XGBoost blend | equal-weight average of the two | combining their strengths |
+| random-intercept model | empirical-Bayes site intercept | site offsets |
+| chained model | a ridge prediction of the other DBP target fed to XGBoost | shared THMFP/HAAFP signal |
+
+Each was run on the single-sample specs (tier 1, tier 2) and the gap-fill spec (THMFP `t3_basin`, HAAFP
+`t4_all`), under the month, site (3 seeds) and forward schemes: 138 cells, all with the same folds and nested
+search.
+
+The random-intercept model uses least-squares fixed effects plus a site intercept shrunk by a
+method-of-moments variance ratio. statsmodels MixedLM did not converge on this collinear design: it returned
+an intercept near 0, and R² was −12 in smoke tests.
+
+The tier 1/2 ridge and XGBoost rows were re-run with 3 site seeds, so they replace the single-seed round-0 rows.
+
+**Honest selection** (`src/select.py`, tests in `tests/test_select.py`).
+
+- Within each deployment scenario, the model for each outer fold is chosen on the *other* folds only.
+- 90 % intervals come from a block bootstrap over months (month and forward schemes) or sites (site scheme),
+  with 2000 resamples.
+- Pairwise differences are bootstrapped on paired blocks.
+- Outputs: `results/headline.csv`, `results/headline_diffs.csv`, `results/conformal.csv`,
+  `figures/31_round2_paired_diffs.png`.
+
+**Selection-adjusted headline R²** (90 % CI). These are the numbers the paper should quote:
+
+| Scenario | THMFP month | THMFP site | THMFP forward | HAAFP month | HAAFP site | HAAFP forward |
+|---|---|---|---|---|---|---|
+| S1 single sample | 0.46 [0.29, 0.58] | 0.60 [0.52, 0.66] | −0.03 [−1.19, 0.47] | 0.50 [0.28, 0.69] | 0.70 [0.63, 0.75] | 0.44 [−0.13, 0.78] |
+| S2 sentinel, k = 1 | 0.63 [0.54, 0.71] | – | – | 0.68 [0.54, 0.78] | – | – |
+| S2 sentinel, k = 4 | 0.65 [0.56, 0.72] | – | – | 0.68 [0.50, 0.80] | – | – |
+| S3 network gap-fill | 0.68 [0.58, 0.75] | 0.75 [0.68, 0.80] | 0.42 [0.18, 0.53] | 0.71 [0.58, 0.80] | 0.75 [0.70, 0.79] | 0.59 [0.21, 0.81] |
+
+Sentinel rows are month-scheme only, with sentinels chosen inside each fold. The intervals for S1, S2 and S3
+overlap on the month scheme for HAAFP, so the network benefit for HAAFP is suggestive, not established. For
+THMFP, S3 is above S1 on new months, and the S1 upper bound of 0.58 sits at the S3 lower bound.
+
+**Paired comparisons** (a − b, 90 % CI; only intervals excluding 0 are claimed):
+
+- **Ridge + XGBoost blend beats XGBoost on tier 2.**
+  - THMFP: +0.10 [0.03, 0.20] on new months, +0.02 [0.00, 0.03] on new sites, +0.19 [0.05, 0.50] forward.
+  - HAAFP: +0.03 [0.00, 0.05] on new months.
+  - Mechanism: the blend inherits ridge's extrapolation.
+- **Ridge with context (tier 2) beats chemistry-only XGBoost for THMFP** on new months (+0.09 [0.02, 0.17]) and
+  forward (+0.19 [0.08, 0.36]). The reverse holds for HAAFP on new sites (−0.21 [−0.25, −0.17]), where
+  chemistry-only XGBoost stays best.
+- **Monotone constraints help XGBoost slightly for THMFP**: +0.02 on new sites, +0.05 [0.00, 0.15] forward. No
+  effect for HAAFP.
+- **The random-intercept model beats ridge on tier 2 for HAAFP on new sites** (+0.14 [0.09, 0.18]), but still
+  trails chemistry-only XGBoost (−0.07). It is no better than ridge elsewhere. With the 54-feature `t4_all` set
+  its unregularised fixed effects fail on new sites (R² −0.02), so it is not recommended with large feature sets.
+- **Spline-ridge is worse than ridge on new months** (THMFP −0.04, HAAFP −0.12) but better for HAAFP on new
+  sites (+0.08).
+- **The specific-FP target and the chained model show no clear difference** anywhere. The chained model's
+  +0.006 for HAAFP forward is negligible.
+
+**Success criteria from the round-2 plan.**
+
+- **S1 missed.** The selection-adjusted honest mean is THMFP 0.53 against a target of 0.54 (round-0 tier-1
+  XGBoost 0.49) and HAAFP 0.60 against a target of 0.69 (baseline 0.64). The HAAFP figure falls below the best
+  single model because honest selection sometimes picks a model that transfers poorly.
+- **THMFP forward R² above 0 without network DBP: missed.** The selection-adjusted value is −0.03; the best
+  single model, the random intercept on tier 2, reaches only 0.01.
+- **Conformal intervals: met.** Coverage of 90 % intervals is 0.88–0.89 overall and 0.86–0.90 per site group.
+  Interval widths are ×/÷ 1.6–2.0 for S1 and ×/÷ 1.5–1.7 for S3. Reservoirs are widest (×/÷ 2.0–2.6).
+
+**What this means for the paper.**
+
+1. Report selection-adjusted numbers with intervals.
+2. Chemistry alone predicts DBP formation potential at about R² 0.5–0.7 in this basin. More model complexity
+   does not move that ceiling.
+3. The practical gains come from information, not algorithms: context and network measurements, especially
+   sentinels.
+4. Among models, prefer ridge or the ridge + XGBoost blend where extrapolation matters (new months, anomalous
+   summers), and chemistry-only XGBoost for HAAFP at new sites.
+5. Report factor-of-two prediction intervals alongside point predictions.
+
+## 8. Limitations and next steps
 
 - 16 months = one seasonal cycle; the forward test is a single 4-month period with an anomaly. More years are
   the only cure for the extrapolation weakness.

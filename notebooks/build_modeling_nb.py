@@ -329,7 +329,99 @@ fig.tight_layout(rect=(0, 0.04, 1, 1)); style.savefig(fig, "29_new_feature_impor
 md("""
 ## 11. Findings (round 1)
 
-See `reports/modeling_findings.md` §6.
+See `reports/modeling_findings.md` §5.
+
+## 12. Sentinel sampling design
+
+Each month, chemistry is measured everywhere but THMFP / HAAFP are lab-tested only at *k* sentinel sites.
+Non-sentinel sites are predicted from their chemistry, their calibration-campaign mean level, and the sentinels'
+deviation from their own normal level that month. Sentinels are chosen by greedy forward selection inside each
+outer leave-months-out fold (`src/sentinel.py`); scores are on non-sentinel rows of held-out months only.
+""")
+code("""
+sent = pd.read_csv(R / "sentinel_summary.csv")
+sent_choice = pd.read_csv(R / "sentinel_choices.csv")
+sent["qa"] = sent["qa"].astype(str).str.lower() == "true"; sent_choice["qa"] = sent_choice["qa"].astype(str).str.lower() == "true"
+sent.pivot_table(index="k", columns=["target", "qa"], values=["r2", "r2_fold_sd"]).round(3)
+""")
+code("""
+ref_full = {t: exp[(exp.target == t) & (exp.tier == ("t3_basin" if t == "THMFP" else "t4_all")) & (exp.model == "ridge") & (exp.scheme == "month")].r2_log.iloc[0] for t in TARGETS}
+fig, axes = plt.subplots(1, 3, figsize=(16, 4.6), gridspec_kw={"width_ratios": [1, 1, 1.1]})
+for ax, t in zip(axes[:2], TARGETS):
+    s = sent[(sent.target == t) & sent.qa].sort_values("k")
+    raw = sent[(sent.target == t) & ~sent.qa].sort_values("k")
+    ax.plot(raw.k, raw.r2, color=style.TEXT_2, lw=1.2, ls=":", marker="o", markersize=3, label="without QA screen")
+    ax.fill_between(s.k, s.r2 - s.r2_fold_sd, s.r2 + s.r2_fold_sd, color=style.TARGET_COLORS[t], alpha=0.07, lw=0)
+    ax.plot(s.k, s.r2, color=style.TARGET_COLORS[t], marker="o", label="sentinel design")
+    ax.axhline(ref_full[t], color=style.TEXT_2, lw=1, ls="--")
+    ax.annotate(f"full-network gap-fill {ref_full[t]:.2f}", (0, ref_full[t]), xytext=(0, 5),
+                textcoords="offset points", ha="left", fontsize=8.5, color=style.TEXT_2)
+    ax.annotate(f"{s.r2.iloc[0]:.2f}", (0, s.r2.iloc[0]), xytext=(6, -12), textcoords="offset points", fontsize=8.5, color=style.TEXT_2)
+    last = s.iloc[-1]
+    ax.annotate(f"{last.r2:.2f}", (last.k, last.r2), xytext=(0, -14), textcoords="offset points", ha="center", fontsize=8.5, color=style.TEXT)
+    ax.set_xticks(s.k); ax.set_xlabel("sentinel sites lab-tested per month (of 44)")
+    ax.set_ylabel("R², non-sentinel sites, new months"); ax.set_title(t)
+    ax.set_ylim(0.2, 0.8); ax.legend(loc="lower right", fontsize=8)
+# how often each site was chosen among the first 4 sentinels
+cnt = {}
+for _, r in sent_choice[sent_choice.qa].iterrows():
+    for s_ in r.order.split(",")[:4]:
+        cnt[(r.target, s_)] = cnt.get((r.target, s_), 0) + 1
+cc = pd.Series(cnt).rename("n").reset_index().rename(columns={"level_0": "target", "level_1": "Site"})
+top = cc.groupby("Site").n.sum().sort_values(ascending=False).head(12).index[::-1]
+ax = axes[2]; y = np.arange(len(top)); h = 0.4
+for k_, t in enumerate(TARGETS):
+    v = cc[cc.target == t].set_index("Site").n.reindex(top).fillna(0)
+    ax.barh(y + (k_ - 0.5) * h, v, height=h * 0.9, color=style.TARGET_COLORS[t], label=t)
+ax.set_yticks(y); ax.set_yticklabels(top); ax.set_xlabel("folds (of 8) in which the site is among the first 4 sentinels")
+ax.set_title("Sites chosen as sentinels"); ax.legend(loc="lower right")
+fig.suptitle("Sentinel design: R² on non-sentinel sites in held-out months (band = ±1 sd over folds; dotted = no QA screen)",
+             x=0.01, ha="left", fontweight="bold")
+fig.tight_layout(); style.savefig(fig, "30_sentinel_design"); plt.show()
+""")
+code("""
+# per-group R2 at each k
+sent[sent.qa].set_index(["target", "k"])[[c for c in sent.columns if c.startswith("r2_") and c != "r2_fold_sd"]].round(2)
+""")
+
+md("""
+## 13. Round 2: model-side levers, honest selection, intervals
+
+Six extra models on the single-sample specs (tier 1, tier 2) and the gap-fill spec, same folds and seeds.
+Selection-adjusted scores choose the candidate per outer fold on the *other* folds (`src/select.py`);
+intervals are 90 % block bootstraps over months (month, forward) or sites (site). See report §7.
+""")
+code("""
+head = pd.read_csv(R / "headline.csv")
+head[["target", "scenario", "scheme", "r2_selected", "ci_lo", "ci_hi", "best_single", "r2_best_single"]].round(3)
+""")
+code("""
+dif = pd.read_csv(R / "headline_diffs.csv")
+LABEL = {"2|mixed|2|ridge": "mixed vs ridge (tier 2)", "2|spline_ridge|2|ridge": "spline-ridge vs ridge (tier 2)",
+         "2|xgb_mono|2|xgb": "monotone XGB vs XGB (tier 2)", "2|xgb_spec|2|xgb": "specific-FP XGB vs XGB (tier 2)",
+         "2|blend|2|xgb": "ridge+XGB blend vs XGB (tier 2)", "1|chained|1|xgb": "chained vs XGB (tier 1)",
+         "2|ridge|1|xgb": "ridge tier 2 vs XGB tier 1"}
+dif["key"] = dif.a + "|" + dif.b
+d = dif[dif.key.isin(LABEL)].copy(); d["label"] = d.key.map(LABEL)
+order = list(LABEL.values())[::-1]
+fig, axes = plt.subplots(2, 3, figsize=(15, 7.5), sharey=True, sharex="col")
+for i, t in enumerate(TARGETS):
+    for j, s in enumerate(["month", "site", "forward"]):
+        ax = axes[i, j]; e = d[(d.target == t) & (d.scheme == s)].set_index("label").reindex(order)
+        y = np.arange(len(order))
+        col = [style.GROUP_COLORS["main_stem"] if lo > 0 else (style.GROUP_COLORS["tributary"] if hi < 0 else style.TEXT_2)
+               for lo, hi in zip(e.ci_lo.fillna(0), e.ci_hi.fillna(0))]
+        ax.hlines(y, e.ci_lo, e.ci_hi, color=col, lw=2)
+        ax.scatter(e.delta_r2, y, color=col, s=36, zorder=3)
+        ax.axvline(0, color=style.TEXT_2, lw=1)
+        ax.set_yticks(y); ax.set_yticklabels(order, fontsize=8.5); ax.set_title(f"{t} — {s}")
+        if i == 1: ax.set_xlabel("ΔR² (a − b), 90 % block-bootstrap CI")
+fig.suptitle("Round-2 paired comparisons (blue = a better, orange = b better, grey = no clear difference)", x=0.01, ha="left", fontweight="bold")
+fig.tight_layout(); style.savefig(fig, "31_round2_paired_diffs"); plt.show()
+""")
+code("""
+conf = pd.read_csv(R / "conformal.csv")
+conf[conf.group == "all"][["target", "scenario", "scheme", "cand", "coverage", "fold_change"]].round(3)
 """)
 
 nb = nbf.v4.new_notebook(cells=cells)
