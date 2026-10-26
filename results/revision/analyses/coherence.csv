@@ -1,0 +1,15 @@
+target,analysis,rule,median_corr,median_r2,n_sites
+THMFP,leave-self-out reference,all_others,0.8295339587960393,0.6881923579533451,44
+THMFP,leave-self-out reference,river_only,0.8054291602530457,0.6487177852265571,44
+THMFP,leave-self-out reference,unit_weighted,0.8077999538084248,0.6525778429316286,44
+THMFP,campaign effect share of within-site variance,"site-centred, OLS on campaign",,0.5692560765535708,44
+THMFP,excluding Apr-Aug 2018 (sensitivity),unit_weighted,0.7664537699586916,0.5874535920364491,44
+THMFP,out-of-fold chemistry residuals,unit_weighted,0.7048149554522711,0.49676442238470137,44
+THMFP,campaign share of out-of-fold residual variance,OLS on campaign,,0.4284171793173007,44
+HAAFP,leave-self-out reference,all_others,0.621016206950018,0.38566228690146154,44
+HAAFP,leave-self-out reference,river_only,0.6446760261472552,0.41614523631855127,44
+HAAFP,leave-self-out reference,unit_weighted,0.6412806919647454,0.4114610282719484,44
+HAAFP,campaign effect share of within-site variance,"site-centred, OLS on campaign",,0.36371647708803345,44
+HAAFP,excluding Apr-Aug 2018 (sensitivity),unit_weighted,0.7287707696535217,0.5311853232107262,44
+HAAFP,out-of-fold chemistry residuals,unit_weighted,0.5489307739471707,0.31003331202425866,44
+HAAFP,campaign share of out-of-fold residual variance,OLS on campaign,,0.2975542045229064,44

@@ -1,0 +1,11 @@
+target,subset,measure,value
+THMFP,all,shared_monthly_share,0.5692560765535708
+THMFP,river,shared_monthly_share,0.6216633280210828
+THMFP,treatment,shared_monthly_share,0.5841924284346559
+THMFP,all,median_pairwise_corr,0.6637724121394493
+THMFP,all,shared_share_after_chemistry,0.3457340034638505
+HAAFP,all,shared_monthly_share,0.36371647708803323
+HAAFP,river,shared_monthly_share,0.45171391749589596
+HAAFP,treatment,shared_monthly_share,0.41581327903431575
+HAAFP,all,median_pairwise_corr,0.39325891923255746
+HAAFP,all,shared_share_after_chemistry,0.22018255981989132

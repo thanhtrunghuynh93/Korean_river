@@ -1,0 +1,4 @@
+strategy,target,order
+greedy,THMFP,"M17,M13,M1,M15,5,M11,1,M7"
+greedy,HAAFP,"M11,T1,T3,M9,M1,5,M17,T5"
+greedy_joint,both,"M17,M13,T3,M11,5,M7,M1,M5"

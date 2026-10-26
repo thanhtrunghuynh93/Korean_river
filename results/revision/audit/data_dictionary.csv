@@ -1,0 +1,21 @@
+variable,description,unit_reported,unit_verified,block,log10_in_models,n_measured,n_nondetect,n_zero,n_placeholder_zero,n_not_measured_by_design,n_missing,n_empty_record
+Temp,water temperature (field),°C,False,field,False,693,0,0,0,0,8,3
+pH,pH (field),-,False,field,False,693,0,0,0,0,8,3
+Turbidity,turbidity (field),NTU,False,field,True,692,1,0,0,0,8,3
+EC,electrical conductivity (field),µS/cm,False,field,True,693,0,0,0,0,8,3
+DO,dissolved oxygen (field),mg/L,False,field,False,549,0,0,0,0,152,3
+SS,suspended solids,mg/L,False,field,True,468,1,0,0,0,232,3
+Br,bromide,mg/L,False,lab,True,684,2,5,0,0,10,3
+BOD,biochemical oxygen demand,mg/L,False,lab,True,469,0,0,0,0,232,3
+COD,chemical oxygen demand,mg/L,False,lab,True,469,0,0,0,0,232,3
+NH3N,ammonia nitrogen,mg/L,False,lab,True,442,25,2,0,0,232,3
+TOC,total organic carbon,mg/L,False,lab,True,693,0,0,0,0,8,3
+SUVA,specific UV absorbance,L/mg·m,False,uv_size,False,284,0,0,1,320,96,3
+Aromaticity,aromaticity index,-,False,uv_size,False,284,0,0,1,320,96,3
+MolWeight,apparent molecular weight,Da,False,uv_size,False,284,0,0,1,320,96,3
+Biopolymer,LC-OCD biopolymers,µg/L C,False,lcocd,True,701,0,0,0,0,0,3
+HS,LC-OCD humic substances,µg/L C,False,lcocd,True,701,0,0,0,0,0,3
+BB,LC-OCD building blocks,µg/L C,False,lcocd,True,701,0,0,0,0,0,3
+LMWN,LC-OCD low-molecular-weight neutrals,µg/L C,False,lcocd,True,701,0,0,0,0,0,3
+THMFP,trihalomethane formation potential (target),mg/L,False,target,True,693,0,0,0,0,8,3
+HAAFP,haloacetic acid formation potential (target),mg/L,False,target,True,692,0,0,0,0,9,3

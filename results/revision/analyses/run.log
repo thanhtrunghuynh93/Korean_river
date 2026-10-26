@@ -1,0 +1,56 @@
+performance / decisions / shift done
+associations / treatment done
+coherence done
+joblib.externals.loky.process_executor._RemoteTraceback: 
+"""
+Traceback (most recent call last):
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/.venv/lib/python3.13/site-packages/joblib/externals/loky/process_executor.py", line 490, in _process_worker
+    r = call_item()
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/.venv/lib/python3.13/site-packages/joblib/externals/loky/process_executor.py", line 291, in __call__
+    return self.fn(*self.args, **self.kwargs)
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/.venv/lib/python3.13/site-packages/joblib/parallel.py", line 607, in __call__
+    return [func(*args, **kwargs) for func, args, kwargs in self.items]
+            ~~~~^^^^^^^^^^^^^^^^^
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/src/rev_eval.py", line 162, in nested_fold
+    Xi = design(dtr, scen, itr)                     # calibration level from inner-training rows only
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/src/rev_eval.py", line 95, in design
+    spec = SCENARIOS[scen]
+           ~~~~~~~~~^^^^^^
+KeyError: 'Q1 field'
+"""
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/src/rev_analyses.py", line 369, in <module>
+    main()
+    ~~~~^^
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/src/rev_analyses.py", line 364, in main
+    tr, dif = tiers(bf); tr.to_csv(OUT / "tiers.csv", index=False); dif.to_csv(OUT / "tier_diffs.csv", index=False)
+              ~~~~~^^^^
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/src/rev_analyses.py", line 62, in tiers
+    p, _ = E.run(t, name, scheme, d, seeds)
+           ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/src/rev_eval.py", line 205, in run
+    out = Parallel(n_jobs=n_jobs)(delayed(nested_fold)(d, scen, scheme, tr, te, fold, s) for fold, tr, te, s in jobs)
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/.venv/lib/python3.13/site-packages/joblib/parallel.py", line 2098, in __call__
+    return output if self.return_generator else list(output)
+                                                ~~~~^^^^^^^^
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/.venv/lib/python3.13/site-packages/joblib/parallel.py", line 1704, in _get_outputs
+    yield from self._retrieve()
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/.venv/lib/python3.13/site-packages/joblib/parallel.py", line 1806, in _retrieve
+    self._raise_error_fast()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/.venv/lib/python3.13/site-packages/joblib/parallel.py", line 1885, in _raise_error_fast
+    error_job.get_result(self.timeout)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/.venv/lib/python3.13/site-packages/joblib/parallel.py", line 780, in get_result
+    return self._return_or_raise()
+           ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/trunght/workspace/researches/greenX_projects/Korean_river/.venv/lib/python3.13/site-packages/joblib/parallel.py", line 795, in _return_or_raise
+    raise self._result
+KeyError: 'Q1 field'
+EXIT 1
