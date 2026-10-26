@@ -4,6 +4,7 @@
     uv run python -m src.train --target THMFP --exp t3_basin --model xgb --scheme month
     uv run python -m src.train --all            # tiers 1-3 x 3 models x 4 schemes + baselines
     uv run python -m src.train --ablation       # experiments x 2 targets x {ridge, xgb} x {month, site, forward}
+    uv run python -m src.train --round2         # round-2 models x {tier 1, tier 2, gap-fill spec} x {month, site, forward}
 
 Every outer fold runs a nested RandomizedSearchCV whose inner folds share the outer scheme's grouping
 (months or sites), so tuning never sees held-out months / sites. Schemes with a random element (`random`,
@@ -25,8 +26,8 @@ from sklearn.model_selection import RandomizedSearchCV
 from preprocessing.load import TARGETS
 from src.cv import SCHEMES, inner_cv, inner_groups, metrics, splits
 from src.experiments import EXPERIMENT_ORDER
-from src.features import TIERS, base_frame, build
-from src.models import BASELINES, MODELS, N_SEARCH_ITER, make_model
+from src.features import TIERS, base_frame, build, other_target, target_col
+from src.models import BASELINES, MODELS, N_SEARCH_ITER, OTHER_Y_COL, ROUND2_MODELS, make_model
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
@@ -86,7 +87,10 @@ def run_cell(target: str, spec, model: str, scheme: str, df: pd.DataFrame | None
              seed: int = SEED, n_seeds: int = N_SEEDS, verbose: bool = True) -> tuple[pd.DataFrame, dict]:
     t0 = time.time()
     is_baseline = model in BASELINES
+    df = base_frame() if df is None else df
     X, y, meta = build(target, 1 if is_baseline else spec, df)
+    if model == "chained":                    # other target's truth for stage-1 training only (see ChainedRegressor)
+        X[OTHER_Y_COL] = df.loc[X.index, target_col(other_target(target))].to_numpy()
     X, y, meta = X.reset_index(drop=True), y.reset_index(drop=True), meta.reset_index(drop=True)
     key = _spec_key(spec, is_baseline)
     seeds = list(range(seed, seed + n_seeds)) if scheme in SEEDED_SCHEMES else [seed]
@@ -148,6 +152,7 @@ def main() -> None:
     ap.add_argument("--scheme", choices=SCHEMES)
     ap.add_argument("--all", action="store_true", help="original tier grid, single seed")
     ap.add_argument("--ablation", action="store_true", help="experiments x targets x {ridge,xgb} x {month,site,forward}")
+    ap.add_argument("--round2", action="store_true", help="round-2 models on the single-sample (tier 1, 2) and gap-fill specs")
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--seeds", type=int, default=None, help="repeats for random/site schemes (default 1 for --all, 3 otherwise)")
     a = ap.parse_args()
@@ -157,6 +162,12 @@ def main() -> None:
         n_seeds = a.seeds or 1
         cells = [(t, "base", b, s) for t in TARGETS for s in SCHEMES for b in BASELINES]
         cells += [(t, tier, m, s) for t in TARGETS for s in SCHEMES for tier in TIERS for m in MODELS]
+    elif a.round2:
+        n_seeds = a.seeds or N_SEEDS
+        gapfill = {"THMFP": "t3_basin", "HAAFP": "t4_all"}
+        models = ("ridge", "xgb") + ROUND2_MODELS
+        cells = [(t, spec, m, s) for t in TARGETS for spec in (1, 2, gapfill[t]) for m in models
+                 for s in ("month", "site", "forward") if not (m == "mixed" and spec == 1)]
     elif a.ablation:
         n_seeds = a.seeds or N_SEEDS
         cells = [(t, e, m, s) for e in EXPERIMENT_ORDER for t in TARGETS for m in ("ridge", "xgb")
