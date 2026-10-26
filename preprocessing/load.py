@@ -24,6 +24,11 @@ PROCESSED_PATH = ROOT / "data" / "processed" / "dbp_clean.csv"
 
 NONDETECT = "불검출"  # Korean: "not detected"
 
+# Method detection limits supplied by the data provider. Non-detects of these variables are replaced by
+# LOD/2 (US EPA QA/G-9S, 2006, Sec. 4.7.1: substitution is acceptable when < 15 % of values are non-detects).
+# Non-detects of variables without a known LOD stay missing.
+DETECTION_LIMITS = {"NH3N": 0.005}
+
 COLUMNS = [
     "Date", "Site", "Sample_KR", "Name_EN", "Position",
     "Temp", "pH", "Turbidity", "EC", "DO", "SS",            # Var 1-6  field measurements
@@ -125,15 +130,17 @@ def _stage_of(name: str) -> str | None:
     return None
 
 
-def clean(df: pd.DataFrame, nondetect: str = "nan") -> pd.DataFrame:
+def clean(df: pd.DataFrame, nondetect: str = "half_lod") -> pd.DataFrame:
     """Return a typed, annotated copy of the raw frame.
 
-    nondetect: how to encode the Korean non-detect marker in numeric columns.
-        "nan"  -> NaN (default; keeps a `<var>_nd` flag column so the info is not lost)
-        "zero" -> 0.0
+    nondetect: how to encode the Korean non-detect marker in numeric columns
+        (every mode keeps a `<var>_nd` flag column so the info is not lost).
+        "half_lod" -> LOD/2 for variables in DETECTION_LIMITS, NaN otherwise (default)
+        "nan"      -> NaN
+        "zero"     -> 0.0
     """
-    if nondetect not in {"nan", "zero"}:
-        raise ValueError("nondetect must be 'nan' or 'zero'")
+    if nondetect not in {"half_lod", "nan", "zero"}:
+        raise ValueError("nondetect must be 'half_lod', 'nan' or 'zero'")
     out = df.copy()
 
     # 1. non-detects -> flag + NaN/0, then coerce to float
@@ -145,6 +152,8 @@ def clean(df: pd.DataFrame, nondetect: str = "nan") -> pd.DataFrame:
         out[col] = pd.to_numeric(out[col].where(~is_nd), errors="coerce")
         if nondetect == "zero" and is_nd.any():
             out.loc[is_nd, col] = 0.0
+        if nondetect == "half_lod" and is_nd.any() and col in DETECTION_LIMITS:
+            out.loc[is_nd, col] = DETECTION_LIMITS[col] / 2
 
     # 2. literal 0 in all three UV/size variables at once = placeholder, not a measurement
     uv = VAR_GROUPS["uv_size"]
